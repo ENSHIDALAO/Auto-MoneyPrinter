@@ -25,6 +25,28 @@ local Signal = devv.load("Signal")
 local item = devv.load('v3item')
 
 -- ========================
+-- 自动W键循环功能
+-- ========================
+local autoWEnabled = true
+local wKeyInterval = 0.1 -- W键按下的间隔时间（秒）
+
+-- 自动W键循环函数
+local function autoWKeyLoop()
+    while autoWEnabled do
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") and LocalPlayer.Character.Humanoid.Health > 0 then
+            -- 按下W键
+            VirtualInputManager:SendKeyEvent(true, "W", false, game)
+            task.wait(0.01)
+            VirtualInputManager:SendKeyEvent(false, "W", false, game)
+        end
+        task.wait(wKeyInterval)
+    end
+end
+
+-- 启动自动W键循环
+coroutine.wrap(autoWKeyLoop)()
+
+-- ========================
 -- 数据存储和文件路径配置
 -- ========================
 local basePath = "/storage/emulated/0/Delta/Workspace/BENAutoScript"
@@ -294,7 +316,7 @@ ScreenGui.ResetOnSpawn = false
 
 -- 创建主容器（右侧信息面板）- 调整高度以容纳清除按钮
 local mainContainer = Instance.new("Frame")
-mainContainer.Size = UDim2.new(0, 240, 0, 160) -- 高度从130增加到160以容纳清除按钮
+mainContainer.Size = UDim2.new(0, 240, 0, 190) -- 高度增加到190以容纳W键控制按钮
 mainContainer.Position = UDim2.new(1, -250, 0, 10)
 mainContainer.AnchorPoint = Vector2.new(0, 0)
 mainContainer.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
@@ -456,10 +478,31 @@ visitedLabel.TextXAlignment = Enum.TextXAlignment.Left
 visitedLabel.TextYAlignment = Enum.TextYAlignment.Center
 visitedLabel.Parent = visitedFrame
 
--- 清除服务器记录按钮（移动到主UI内）
+-- 自动W键控制按钮
+local wKeyButton = Instance.new("TextButton")
+wKeyButton.Size = UDim2.new(0.9, 0, 0, 25)
+wKeyButton.Position = UDim2.new(0.05, 0, 0, 130)
+wKeyButton.BackgroundColor3 = Color3.fromRGB(60, 150, 200)
+wKeyButton.BackgroundTransparency = 0.2
+wKeyButton.TextColor3 = Color3.new(1, 1, 1)
+wKeyButton.Font = Enum.Font.GothamBold
+wKeyButton.TextSize = 12
+wKeyButton.Text = "自动W键: 开启"
+wKeyButton.Parent = mainContainer
+
+local wKeyButtonCorner = Instance.new("UICorner")
+wKeyButtonCorner.CornerRadius = UDim.new(0, 6)
+wKeyButtonCorner.Parent = wKeyButton
+
+local wKeyButtonStroke = Instance.new("UIStroke")
+wKeyButtonStroke.Color = Color3.fromRGB(100, 180, 255)
+wKeyButtonStroke.Thickness = 1
+wKeyButtonStroke.Parent = wKeyButton
+
+-- 清除服务器记录按钮
 local clearButton = Instance.new("TextButton")
 clearButton.Size = UDim2.new(0.9, 0, 0, 25)
-clearButton.Position = UDim2.new(0.05, 0, 0, 130)
+clearButton.Position = UDim2.new(0.05, 0, 0, 160)
 clearButton.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
 clearButton.BackgroundTransparency = 0.2
 clearButton.TextColor3 = Color3.new(1, 1, 1)
@@ -480,7 +523,7 @@ clearButtonStroke.Parent = clearButton
 -- 显示执行次数的标签（放在清除按钮下方）
 local countLabel = Instance.new("TextLabel")
 countLabel.Size = UDim2.new(1, -10, 0, 15)
-countLabel.Position = UDim2.new(0, 5, 0, 158)
+countLabel.Position = UDim2.new(0, 5, 0, 188)
 countLabel.BackgroundTransparency = 1
 countLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
 countLabel.Font = Enum.Font.Gotham
@@ -514,7 +557,31 @@ local function updateCountDisplay()
     countLabel.Text = "计数: " .. tostring(currentCount) .. "/10"
 end
 
+-- W键按钮点击事件
+wKeyButton.MouseButton1Click:Connect(function()
+    autoWEnabled = not autoWEnabled
+    if autoWEnabled then
+        wKeyButton.Text = "自动W键: 开启"
+        wKeyButton.BackgroundColor3 = Color3.fromRGB(60, 150, 200)
+        wKeyButtonStroke.Color = Color3.fromRGB(100, 180, 255)
+        print("✅ 自动W键已开启")
+    else
+        wKeyButton.Text = "自动W键: 关闭"
+        wKeyButton.BackgroundColor3 = Color3.fromRGB(150, 60, 60)
+        wKeyButtonStroke.Color = Color3.fromRGB(255, 100, 100)
+        print("❌ 自动W键已关闭")
+    end
+end)
+
 -- 按钮点击效果
+wKeyButton.MouseEnter:Connect(function()
+    TweenService:Create(wKeyButton, TweenInfo.new(0.2), {BackgroundTransparency = 0}):Play()
+end)
+
+wKeyButton.MouseLeave:Connect(function()
+    TweenService:Create(wKeyButton, TweenInfo.new(0.2), {BackgroundTransparency = 0.2}):Play()
+end)
+
 clearButton.MouseEnter:Connect(function()
     TweenService:Create(clearButton, TweenInfo.new(0.2), {BackgroundTransparency = 0}):Play()
 end)
@@ -523,14 +590,14 @@ clearButton.MouseLeave:Connect(function()
     TweenService:Create(clearButton, TweenInfo.new(0.2), {BackgroundTransparency = 0.2}):Play()
 end)
 
--- 按钮点击事件
+-- 清除按钮点击事件
 clearButton.MouseButton1Click:Connect(function()
     local success = clearVisitedServers()
     
     -- 显示操作结果
     local resultLabel = Instance.new("TextLabel")
     resultLabel.Size = UDim2.new(1, -10, 0, 15)
-    resultLabel.Position = UDim2.new(0, 5, 0, 158)
+    resultLabel.Position = UDim2.new(0, 5, 0, 188)
     resultLabel.BackgroundTransparency = 1
     resultLabel.Font = Enum.Font.Gotham
     resultLabel.TextSize = 10
@@ -991,3 +1058,4 @@ print("执行计数文件: " .. executionCountFile)
 print("服务器记录文件: " .. visitedServersFile)
 print("印钞机计数文件: " .. moneyPrinterCountFile)
 print("当前印钞机检测次数: " .. moneyPrinterCount)
+print("自动W键功能: " .. (autoWEnabled and "已启用" or "已禁用"))
