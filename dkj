@@ -28,9 +28,25 @@ local forceServerSwitchTime = 2.5 -- 2.5秒后强制换服
 local allCoroutines = {} -- 存储所有协程
 local allConnections = {} -- 存储所有连接
 
+-- 物品锁定相关变量
+local currentTargetItem = nil
+local isLockedToItem = false
+local itemLockConnection = nil
+local lastItemPosition = nil
+local itemLockStartTime = 0
+local itemLockTimeout = 8 -- 物品锁定超时时间（秒）
+
 -- 停止所有正在执行的脚本功能
 local function stopAllScripts()
     print("🛑 正在停止所有脚本功能...")
+    
+    -- 停止物品锁定
+    if itemLockConnection then
+        itemLockConnection:Disconnect()
+        itemLockConnection = nil
+    end
+    currentTargetItem = nil
+    isLockedToItem = false
     
     -- 停止所有协程
     for _, coro in ipairs(allCoroutines) do
@@ -1048,7 +1064,7 @@ local function forceServerSwitch()
 end
 
 -- ========================
--- 物品收集与检测功能
+-- 物品收集与检测功能 - 增强版
 -- ========================
 local forbiddenZoneCenter = Vector3.new(352.884155, 13.0287256, -1353.05396)
 local forbiddenRadius = 80
@@ -1069,7 +1085,7 @@ local targetItems = {
     "Black Rose", "Heart Balloon", "Dafy Money Printor", "NextBot Grenade", 
     "Military Armory Keycard", "Trident", "Helicopter", "Diamond Ring", 
     "Diamond", "Void Gem", "Dark Matter Gem", "Rollie", "Nuclear Missile Launcher",
-    "Suitcase Nuke", "Trident", "Golden Cup"
+    "Suitcase Nuke", "Trident", "Golden Cup",
 }
 
 -- 获取实际可拾取的物品列表
@@ -1112,7 +1128,96 @@ local function incrementMoneyPrinterDetection()
     end
 end
 
--- 物品检测
+-- 停止物品锁定
+local function stopItemLock()
+    if itemLockConnection then
+        itemLockConnection:Disconnect()
+        itemLockConnection = nil
+    end
+    currentTargetItem = nil
+    isLockedToItem = false
+    lastItemPosition = nil
+end
+
+-- 物品锁定功能 - 将人物与物品锁定在一起
+local function lockToItem(item)
+    if not item or not item.Parent then return false end
+    
+    stopItemLock() -- 停止之前的锁定
+    
+    currentTargetItem = item
+    isLockedToItem = true
+    itemLockStartTime = os.clock()
+    lastItemPosition = item.Position
+    
+    print("🔒 开始锁定物品: " .. tostring(item.Name))
+    
+    -- 创建物品锁定连接
+    itemLockConnection = RunService.Heartbeat:Connect(function()
+        if not scriptEnabled or not isLockedToItem then
+            stopItemLock()
+            return
+        end
+        
+        -- 检查超时
+        if os.clock() - itemLockStartTime > itemLockTimeout then
+            print("⏰ 物品锁定超时，停止锁定")
+            stopItemLock()
+            return
+        end
+        
+        local character = LocalPlayer.Character
+        if not character then
+            stopItemLock()
+            return
+        end
+        
+        local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+        if not humanoidRootPart then
+            stopItemLock()
+            return
+        end
+        
+        -- 检查物品是否仍然存在
+        if not currentTargetItem or not currentTargetItem.Parent then
+            print("✅ 物品已拾取或消失")
+            stopItemLock()
+            return
+        end
+        
+        -- 更新物品位置
+        if currentTargetItem.Position ~= lastItemPosition then
+            lastItemPosition = currentTargetItem.Position
+        end
+        
+        -- 将人物移动到物品位置（保持一定高度）
+        local targetCFrame = CFrame.new(lastItemPosition) * CFrame.new(0, 2, 0)
+        humanoidRootPart.CFrame = targetCFrame
+        
+        -- 持续触发拾取
+        local prompt = currentTargetItem:FindFirstChildOfClass("ProximityPrompt")
+        if prompt then
+            fireproximityprompt(prompt)
+            
+            -- 同时按下E键增强拾取效果
+            VirtualInputManager:SendKeyEvent(true, "E", false, game)
+            task.wait(0.01)
+            VirtualInputManager:SendKeyEvent(false, "E", false, game)
+        end
+        
+        -- 检查物品是否已被拾取（通过检查距离是否异常）
+        local distance = (humanoidRootPart.Position - lastItemPosition).Magnitude
+        if distance > 10 then -- 如果距离异常，可能物品已消失
+            print("ℹ️ 物品距离异常，停止锁定")
+            stopItemLock()
+        end
+    end)
+    
+    table.insert(allConnections, itemLockConnection)
+    return true
+end
+
+-- 增强的物品检测
 local function FindTargetItems()
     local foundItems = {}
     local startTime = os.clock()
@@ -1170,64 +1275,39 @@ local function FindTargetItems()
     return foundItems
 end
 
--- 物品收集
+-- 增强的物品收集（使用锁定机制）
 local function PickItem(item, prompt)
     if not item or not prompt or not item.Parent then return false end
     
-    local startTime = tick()
-    local timeout = 3
-    local itemCollected = false
-    local shouldSwitchServer = false
+    print("🎯 开始收集物品: " .. tostring(prompt.ObjectText))
     
-    prompt.RequiresLineOfSight = false
-    prompt.HoldDuration = 0
-    
-    local eKeyLoop = coroutine.create(function()
-        while not itemCollected and item and item.Parent and tick() - startTime < timeout do
-            VirtualInputManager:SendKeyEvent(true, "E", false, game)
-            task.wait(0.01)
-            VirtualInputManager:SendKeyEvent(false, "E", false, game)
-            task.wait(0.01)
-        end
-    end)
-    
-    coroutine.resume(eKeyLoop)
-    
-    local connection
-    connection = RunService.Heartbeat:Connect(function()
-        if not scriptEnabled then
-            if connection then connection:Disconnect() end
-            return
-        end
-        
-        if not item or not item.Parent then
-            itemCollected = true
-            if connection then connection:Disconnect() end
-            return
-        end
-        
-        if tick() - startTime >= timeout then
-            shouldSwitchServer = true
-            if connection then connection:Disconnect() end
-            return
-        end
-        
-        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-            LocalPlayer.Character.HumanoidRootPart.CFrame = item.CFrame * CFrame.new(0, 2, 0)
-        end
-        fireproximityprompt(prompt)
-    end)
-    
-    repeat 
-        task.wait(0.1) 
-    until itemCollected or not item or not item.Parent or tick() - startTime >= timeout or not scriptEnabled
-    
-    if connection then
-        connection:Disconnect()
+    -- 启动物品锁定
+    local lockSuccess = lockToItem(item)
+    if not lockSuccess then
+        return false
     end
     
-    if shouldSwitchServer and scriptEnabled then
-        TPServer()
+    local startTime = tick()
+    local timeout = 10 -- 延长超时时间，因为锁定机制会更有效
+    local itemCollected = false
+    
+    -- 等待物品被拾取或超时
+    while not itemCollected and item and item.Parent and tick() - startTime < timeout and isLockedToItem do
+        task.wait(0.1)
+        
+        -- 检查物品是否已被拾取
+        if not item.Parent then
+            itemCollected = true
+            print("✅ 物品收集成功!")
+            break
+        end
+    end
+    
+    -- 停止锁定
+    stopItemLock()
+    
+    if not itemCollected then
+        print("❌ 物品收集失败或超时")
     end
     
     return itemCollected
@@ -1239,9 +1319,12 @@ local function autoPressE()
     table.insert(allCoroutines, coro)
     
     while scriptEnabled do
-        VirtualInputManager:SendKeyEvent(true, "E", false, game)
-        task.wait(0.01)
-        VirtualInputManager:SendKeyEvent(false, "E", false, game)
+        -- 只有在没有锁定物品时才自动按E
+        if not isLockedToItem then
+            VirtualInputManager:SendKeyEvent(true, "E", false, game)
+            task.wait(0.01)
+            VirtualInputManager:SendKeyEvent(false, "E", false, game)
+        end
         task.wait(0.01)
     end
 end
@@ -1252,24 +1335,28 @@ local function mainLoop()
     table.insert(allCoroutines, coro)
     
     while scriptEnabled do
-        local character = LocalPlayer.Character
-        if not character then
-            LocalPlayer.CharacterAdded:Wait()
-            character = LocalPlayer.Character
-        end
-        
-        local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-        local humanoid = character:WaitForChild("Humanoid")
-        
-        local items = FindTargetItems()
-        if #items > 0 then
-            for _, itemData in ipairs(items) do
-                if PickItem(itemData.item, itemData.prompt) then
-                    break
-                end
+        -- 如果当前没有锁定物品，则寻找新物品
+        if not isLockedToItem then
+            local character = LocalPlayer.Character
+            if not character then
+                LocalPlayer.CharacterAdded:Wait()
+                character = LocalPlayer.Character
             end
-        else
-            TPServer()
+            
+            local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+            local humanoid = character:WaitForChild("Humanoid")
+            
+            local items = FindTargetItems()
+            if #items > 0 then
+                for _, itemData in ipairs(items) do
+                    if PickItem(itemData.item, itemData.prompt) then
+                        break
+                    end
+                end
+            else
+                -- 如果没有找到物品，切换到其他服务器
+                TPServer()
+            end
         end
         
         task.wait(0.1)
@@ -1282,12 +1369,14 @@ end
 local function onCharacterAdded(character)
     print("🎮 人物已加载，等待角色准备完成...")
     
+    -- 停止所有现有功能
+    stopAllScripts()
+    
     -- 等待角色完全加载
     character:WaitForChild("Humanoid")
     character:WaitForChild("HumanoidRootPart")
     
     -- 重置脚本状态
-    stopAllScripts()
     scriptEnabled = true
     scriptStartTime = os.clock()
     
@@ -1344,4 +1433,5 @@ print("🔢 当前执行次数: " .. readExecutionCount())
 print("💰 当前印钞机检测次数: " .. moneyPrinterCount)
 print("⚡ 自动W键功能: " .. (autoWEnabled and "已启用" or "已禁用"))
 print("🚫 黑名单功能: " .. (blacklistEnabled and "已启用" or "已禁用"))
+print("🔒 物品锁定功能: 已启用 (超时: " .. itemLockTimeout .. "秒)")
 print("⏰ 2.5秒强制换服功能: 已启用")
